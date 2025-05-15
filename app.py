@@ -453,38 +453,49 @@ with tabs[0]:
     import matplotlib.cm as cm
 
     def gauge_chart(value, title):
-        # create figure & axes with no background
+        # detect theme: 'light' or 'dark'
+        
+        # create transparent figure & axes
         fig, ax = plt.subplots(
             figsize=(2.2, 2.2),
             subplot_kw={'aspect':'equal'},
-            facecolor='none'               # figure background transparent
+            facecolor='none'
         )
-        ax.set_facecolor('none')          # axes background transparent
+        ax.set_facecolor('none')
 
+        # pick slice color
         cmap = cm.get_cmap('YlOrRd')
-        color = cmap(value / 100)
+        slice_color = cmap(value / 100)
 
-        # donut: [value, remainder]
+        # draw donut
         ax.pie(
             [value, 100 - value],
-            colors=[color, 'lightgray'],
+            colors=[slice_color, 'lightgray'],
             startangle=90,
             counterclock=False,
             wedgeprops={'width':0.3, 'edgecolor':'white'}
         )
 
+        # center label
         ax.annotate(
-            f"{value:.0f}%", xy=(0,0),
+            f"{value:.0f}%", 
+            xy=(0,0),
             ha='center', va='center',
             fontsize=14, fontweight='bold',
             color='white'
         )
-        ax.set_title(title, fontsize=10, pad=12, color='white')
-        ax.axis('off')
 
-        # ensure the figure patch is transparent
+        # title
+        ax.set_title(
+            title,
+            fontsize=10, pad=12,
+            color='white'
+        )
+
+        ax.axis('off')
         fig.patch.set_alpha(0)
         return fig
+
 
 
     # --- render three gauges ---
