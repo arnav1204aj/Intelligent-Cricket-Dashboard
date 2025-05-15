@@ -317,13 +317,18 @@ FILES = {
     "360° Shot Metrics":         "data/t20_batter_stats_360.bin",
     "Entropy Focus":             "data/t20_entropy_focus.bin",
     "spin durations":            "data/negative_dur_spin.bin",
-    "pace durations":            "data/negative_dur_pace.bin"
+    "pace durations":            "data/negative_dur_pace.bin",
+    'metric_percentiles':        "data/metric_percentiles.bin"
+
+    
+
 
 }
 
 @st.cache_data
 def load_core_stats(files_map):
     stats = {}
+    # Load each .bin into stats[label]
     for label, path in files_map.items():
         p = Path(path)
         if not p.exists():
@@ -332,10 +337,19 @@ def load_core_stats(files_map):
         else:
             with open(p, "rb") as f:
                 stats[label] = pickle.load(f)
-    common = sorted(set.intersection(*[
-        set(d.keys()) for d in stats.values() if isinstance(d, dict)
-    ]))
+
+    # Build list of key‐sets for all sections *except* metric_percentiles
+    relevant_sets = [
+        set(d.keys())
+        for label, d in stats.items()
+        if label != "metric_percentiles" and isinstance(d, dict)
+    ]
+
+    # Compute intersection only over those relevant sets
+    common = sorted(set.intersection(*relevant_sets)) if relevant_sets else []
+
     return stats, common
+
 
 stats_dicts, common_batters = load_core_stats(FILES)
 
@@ -380,12 +394,39 @@ rename_maps = {
     }
 }
 
-def make_df(section_label, entry):
-    df = pd.DataFrame.from_dict(entry, orient="index", columns=["Value"])
+def make_df(section_label, entry, percentiles, batter):
+    # build base df
+    if section_label=='Entropy Focus':
+        colval = 'Value'
+    else:
+        colval = "Value (Percentile)" 
+    df = pd.DataFrame.from_dict(entry, orient="index", columns=[colval])
     df.index.name = "Metric"
     df = df.rename(index=rename_maps.get(section_label, {}))
-    df["Value"] = df["Value"].apply(lambda v: f"{v:.2f}" if isinstance(v, numbers.Number) else v)
+
+    # for each row, if numeric, append percentile in brackets
+    def fmt(val, raw_metric):
+        if isinstance(val, numbers.Number):
+            p = percentiles.get(section_label, {}) \
+                           .get(batter, {}) \
+                           .get(raw_metric, None)
+            if p is not None:
+                return f"{val:.2f} ({p:.0f}%)"
+            else:
+                return f"{val:.2f}"
+        return val
+
+    # apply formatting: need raw_metric names in same order as df.index
+    # so map df.index back to raw_metric via invert rename_map
+    inv_map = {v:k for k,v in rename_maps.get(section_label, {}).items()}
+    raw_metrics = [inv_map.get(m, m) for m in df.index]
+    df[colval] = [
+        fmt(df.loc[df.index[i], colval], raw_metrics[i])
+        for i in range(len(df))
+    ]
+
     return df
+
 
 tabs = st.tabs([
     "Overview",
@@ -397,24 +438,86 @@ tabs = st.tabs([
 
 with tabs[0]:
     st.subheader(f"Overview: {batter}")
-    ir = stats_dicts["Intent & Reliability"][batter]
-    im = stats_dicts["Intent Impact Metrics"][batter]
-    shot = stats_dicts["360° Shot Metrics"][batter]
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Avg Int-Rel", f"{ir['avg_int_rel']:.2f}")
-    col2.metric("Final Intent Impact", f"{im['final_intent_impact']:.2f}")
-    col3.metric("Impact Acceleration", f"{im['impact_acceleration']:.2f}")
-    col4.metric("360 Score", f"{shot['score360']:.2f}")
-    st.markdown("Use the tabs to explore each analysis in detail.")
+
+    # --- compute three average percentiles ---
+    pct = stats_dicts["metric_percentiles"]
+    ir_vals     = list(pct["Intent & Reliability"].get(batter, {}).values())
+    imp_vals    = list(pct["Intent Impact Metrics"].get(batter, {}).values())
+    shot_vals   = list(pct["360° Shot Metrics"].get(batter, {}).values())
+    ir_avg  = np.mean(ir_vals)  if ir_vals  else 0
+    imp_avg = np.mean(imp_vals) if imp_vals else 0
+    sh_avg  = np.mean(shot_vals) if shot_vals else 0
+
+    # --- gauge helper ---
+    # --- gauge helper with transparent background ---
+    import matplotlib.cm as cm
+
+    def gauge_chart(value, title):
+        # create figure & axes with no background
+        fig, ax = plt.subplots(
+            figsize=(2.2, 2.2),
+            subplot_kw={'aspect':'equal'},
+            facecolor='none'               # figure background transparent
+        )
+        ax.set_facecolor('none')          # axes background transparent
+
+        cmap = cm.get_cmap('YlOrRd')
+        color = cmap(value / 100)
+
+        # donut: [value, remainder]
+        ax.pie(
+            [value, 100 - value],
+            colors=[color, 'lightgray'],
+            startangle=90,
+            counterclock=False,
+            wedgeprops={'width':0.3, 'edgecolor':'white'}
+        )
+
+        ax.annotate(
+            f"{value:.0f}%", xy=(0,0),
+            ha='center', va='center',
+            fontsize=14, fontweight='bold',
+            color='white'
+        )
+        ax.set_title(title, fontsize=10, pad=12, color='white')
+        ax.axis('off')
+
+        # ensure the figure patch is transparent
+        fig.patch.set_alpha(0)
+        return fig
+
+
+    # --- render three gauges ---
+    c1, c2, c3 = st.columns(3)
+    c1.pyplot(gauge_chart(ir_avg,  "Intent & Reliability Profile"))
+    c2.pyplot(gauge_chart(imp_avg, "Impact Profile"))
+    c3.pyplot(gauge_chart(sh_avg,  "360° Profile"))
+
+    st.markdown("Use the tabs above to dive into each analysis in detail.")
 
 with tabs[1]:
     st.subheader("Intent & Reliability")
-    st.dataframe(make_df("Intent & Reliability", stats_dicts["Intent & Reliability"][batter]), use_container_width=True)
+    df_ir = make_df(
+    "Intent & Reliability",
+    stats_dicts["Intent & Reliability"][batter],
+    stats_dicts["metric_percentiles"],
+    batter
+    )
+    st.dataframe(df_ir, use_container_width=True)
+
+    
 
 with tabs[2]:
     st.subheader("Intent Impact Metrics")
-    df_im = make_df("Intent Impact Metrics", stats_dicts["Intent Impact Metrics"][batter])
-    st.dataframe(df_im, use_container_width=True)
+    df_ir = make_df(
+    "Intent Impact Metrics",
+    stats_dicts["Intent Impact Metrics"][batter],
+    stats_dicts["metric_percentiles"],
+    batter
+    )  
+    st.dataframe(df_ir, use_container_width=True)
+
+    
 
     st.markdown("### Intent Impact Progression")
     fig = plot_intent_impact(batter)
@@ -427,7 +530,14 @@ with tabs[2]:
 
 with tabs[3]:
     st.subheader("360° Shot Metrics")
-    st.dataframe(make_df("360° Shot Metrics", stats_dicts["360° Shot Metrics"][batter]), use_container_width=True)
+    df_ir = make_df(
+    "360° Shot Metrics",
+    stats_dicts["360° Shot Metrics"][batter],
+    stats_dicts["metric_percentiles"],
+    batter
+    )
+    st.dataframe(df_ir, use_container_width=True)
+
 
     # ======== Here is your unmodified plot call ========
     # Set these to whatever you were using alongside your function
@@ -442,7 +552,8 @@ with tabs[3]:
 
 with tabs[4]:
     st.subheader("Key Performance Factors")
-    st.dataframe(make_df("Entropy Focus", stats_dicts["Entropy Focus"][batter]), use_container_width=True)
+    st.dataframe(make_df("Entropy Focus", stats_dicts["Entropy Focus"][batter],stats_dicts["metric_percentiles"],
+    batter), use_container_width=True)
 
     # ── New: Time to Settle metrics ──
     spin_settle = stats_dicts["spin durations"].get(batter, None)
