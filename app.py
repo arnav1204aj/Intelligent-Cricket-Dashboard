@@ -458,7 +458,7 @@ with tabs[4]:
     )
 
     # ── Entry Points UI ──
-    st.markdown("### 📈 Entry Points")
+    st.markdown("### Entry Point Calculator")
     ground_list = ["Neutral Venue"] + [g for g in gchar.keys() if g != "Neutral Venue"]
     ground      = st.selectbox("Select Ground", ground_list, key="entropy_ground")
     num_spinners = st.slider("Opposition Spinners", 0, 6, 2, key="entropy_spin")
