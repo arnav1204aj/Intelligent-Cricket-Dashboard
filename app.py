@@ -315,7 +315,10 @@ FILES = {
     "Intent & Reliability":      "data/t20_intent_reliability_stats.bin",
     "Intent Impact Metrics":     "data/batter_intent_stats.bin",
     "360° Shot Metrics":         "data/t20_batter_stats_360.bin",
-    "Entropy Focus":             "data/t20_entropy_focus.bin"
+    "Entropy Focus":             "data/t20_entropy_focus.bin",
+    "spin durations":            "data/negative_dur_spin.bin",
+    "pace durations":            "data/negative_dur_pace.bin"
+
 }
 
 @st.cache_data
@@ -441,10 +444,23 @@ with tabs[4]:
     st.subheader("Key Performance Factors")
     st.dataframe(make_df("Entropy Focus", stats_dicts["Entropy Focus"][batter]), use_container_width=True)
 
-    # --- New: Best Entry Point UI ---
+    # ── New: Time to Settle metrics ──
+    spin_settle = stats_dicts["spin durations"].get(batter, None)
+    pace_settle = stats_dicts["pace durations"].get(batter, None)
+    col1, col2 = st.columns(2)
+    col1.metric(
+        "Time to Settle vs Spin",
+        f"{int(spin_settle)} balls" if spin_settle is not None else "N/A"
+    )
+    col2.metric(
+        "Time to Settle vs Pace",
+        f"{int(pace_settle)} balls" if pace_settle is not None else "N/A"
+    )
+
+    # ── Entry Points UI ──
     st.markdown("### 📈 Entry Points")
     ground_list = ["Neutral Venue"] + [g for g in gchar.keys() if g != "Neutral Venue"]
-    ground = st.selectbox("Select Ground", ground_list, key="entropy_ground")
+    ground      = st.selectbox("Select Ground", ground_list, key="entropy_ground")
     num_spinners = st.slider("Opposition Spinners", 0, 6, 2, key="entropy_spin")
     num_pacers   = st.slider("Opposition Pacers",   0, 6, 4, key="entropy_pace")
 
@@ -471,3 +487,4 @@ with tabs[4]:
                         </p>
                     </div>
                 """, unsafe_allow_html=True)
+
