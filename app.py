@@ -1,612 +1,385 @@
+# app.py
 import streamlit as st
-st.set_page_config(
-    page_title="🏏 Batter Performance Dashboard",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
 import pickle
-import pandas as pd
-import numbers
+import os
 import numpy as np
-from pathlib import Path
-import matplotlib.pyplot as plt
-from matplotlib.lines import Line2D
-from sklearn.cluster import DBSCAN  # (imported to satisfy any dependencies)
-from scipy.spatial.distance import pdist, squareform
-import seaborn as sns
-sns.set_theme(style="darkgrid")
+from math import isfinite
 
-# --- Entry Planner Data & Helpers ---
-@st.cache_data
-def load_planner_data():
-    def load_pickle(path):
-        with open(path, "rb") as f:
-            return pickle.load(f)
+# -------------------- Helpers --------------------
+def load_bin(path):
+    with open(path, "rb") as f:
+        return pickle.load(f)
+
+def safe_val(d, key):
+    """Return a numeric value from d[key]. If it's a dict, take a numeric inner value.
+       If missing or non-numeric, return np.nan."""
+    if d is None:
+        return np.nan
+    v = d.get(key, np.nan)
+    if isinstance(v, dict):
+        # try explicit common keys first
+        for k in ("value", "val", "intent", "score", list(v.keys())[0] if v else None):
+            if k and k in v and isinstance(v[k], (int, float)) and isfinite(v[k]):
+                return float(v[k])
+        # else pick first numeric entry
+        for vv in v.values():
+            if isinstance(vv, (int, float)) and isfinite(vv):
+                return float(vv)
+        return np.nan
+    # numeric
+    if isinstance(v, (int, float)) and isfinite(v):
+        return float(v)
+    # sometimes v could be string number
+    try:
+        return float(v)
+    except Exception:
+        return np.nan
+
+def percentile_better(value, arr, higher_is_better=True):
+    """Return percentage (0-100) of entries in arr that the current value is 'better than'.
+       For ties count half. NaNs in arr are ignored. If arr empty return np.nan.
+    """
+    arr = np.array([x for x in arr if x is not None and not np.isnan(x)])
+    if arr.size == 0 or np.isnan(value):
+        return np.nan
+    if higher_is_better:
+        less = np.sum(arr < value)
+        equal = np.sum(arr == value)
+        score = (less + 0.5 * equal) / arr.size
+    else:
+        # lower is better -> count how many are greater than value
+        greater = np.sum(arr > value)
+        equal = np.sum(arr == value)
+        score = (greater + 0.5 * equal) / arr.size
+    return float(score * 100.0)
+
+def colored_bar_html(pct):
+    """Return an HTML snippet drawing a horizontal red->green gradient bar (full gradient across 0..100),
+    and mask the right side so only 'pct'% of the gradient is visible as the filled portion.
+    Score text is displayed in white on top of the bar.
+    """
+    if pct is None or np.isnan(pct):
+        pct = 0.0
+    pct = float(max(0.0, min(100.0, pct)))
+
+    html = f"""
+    <div style="position:relative; width:100%; height:22px;
+                border-radius:6px; overflow:hidden;
+                box-shadow: inset 0 -2px 0 rgba(0,0,0,0.08);">
+      <!-- full gradient background (covers entire bar from 0..100) -->
+      <div style="position:absolute; inset:0;
+                  background: linear-gradient(90deg, #e74c3c 0%, #f1c40f 50%, #2ecc71 100%);
+                  z-index:0;"></div>
+
+      <!-- mask (covers the unfilled/right portion) -->
+      <div style="position:absolute; top:0; bottom:0; left:{pct}%; right:0;
+                  background:#eee; z-index:1;
+                  border-top-right-radius:6px; border-bottom-right-radius:6px;"></div>
+
+      <!-- score text centered above the bar (white) -->
+      <div style="position:absolute; left:50%; top:50%;
+                  transform: translate(-50%, -50%);
+                  z-index:2; color:black; font-weight:700; font-size:20px;
+                  text-shadow: 0 1px 2px rgba(0,0,0,0.6); padding:0px 8px; border-radius:4px;">
+        {pct:.1f}%
+      </div>
+    </div>
+    """
+    return html
+
+
+# -------------------- Load data --------------------
+DATA_DIR = "t20_decay"
+required_files = ["fshots.bin", "intents.bin", "negative_dur.bin", "impact_stats.bin"]
+for fn in required_files:
+    if not os.path.exists(os.path.join(DATA_DIR, fn)):
+        raise FileNotFoundError(f"Required file missing: {os.path.join(DATA_DIR, fn)}")
+
+fshots = load_bin(os.path.join(DATA_DIR, "fshots.bin"))
+intents = load_bin(os.path.join(DATA_DIR, "intents.bin"))
+negative_dur = load_bin(os.path.join(DATA_DIR, "negative_dur.bin"))
+impact_stats = load_bin(os.path.join(DATA_DIR, "impact_stats.bin"))
+
+# -------------------- Global batter list (intersection) --------------------
+batter_list = sorted(
+    set(fshots.keys())
+    & set(intents.keys())
+    & set(negative_dur.keys())
+    & set(impact_stats.keys())
+)
+
+# -------------------- Precompute arrays for percentiles --------------------
+# Build arrays aligned on batter_list for the metrics we will show.
+
+def build_metric_arrays(b_list):
+    ipace = []
+    isp = []
+    iov = []
+    rel_pace_a = []
+    rel_spin_a = []
+    rel_overall_a = []
+    # impact tab arrays
+    negdur_a = []
+    per_ball_a = []
+    per_inn_a = []
+    imp_improv_a = []
+    for b in b_list:
+        # intents
+        ip = safe_val(intents[b], "pace")
+        is_ = safe_val(intents[b], "spin")
+        ipace.append(ip)
+        isp.append(is_)
+        iov.append(np.nanmean([x for x in (ip, is_) if not np.isnan(x)]) if not (np.isnan(ip) and np.isnan(is_)) else np.nan)
+
+        # fshots -> reliability = 1 / fshots
+        fs_p = safe_val(fshots[b], "pace")
+        fs_s = safe_val(fshots[b], "spin")
+        rel_p = np.nan if fs_p == 0 or np.isnan(fs_p) else 1.0 / fs_p
+        rel_s = np.nan if fs_s == 0 or np.isnan(fs_s) else 1.0 / fs_s
+        rel_pace_a.append(rel_p)
+        rel_spin_a.append(rel_s)
+        rel_overall_a.append(np.nanmean([x for x in (rel_p, rel_s) if not np.isnan(x)]) if not (np.isnan(rel_p) and np.isnan(rel_s)) else np.nan)
+
+        # negative dur
+        nd = safe_val(negative_dur, b) if isinstance(negative_dur, dict) and b in negative_dur else safe_val({"v":negative_dur.get(b)},"v") if isinstance(negative_dur, dict) else np.nan
+        # simpler: negative_dur is dict[batter]=value so:
+        try:
+            nd = float(negative_dur[b])
+        except Exception:
+            nd = np.nan
+        negdur_a.append(nd)
+
+        # impact_stats: dict[b][metric]
+        imp = impact_stats.get(b, {})
+        per_ball = safe_val(imp, "per_ball_impact") if isinstance(imp, dict) else np.nan
+        per_inn = safe_val(imp, "per_inn_impact") if isinstance(imp, dict) else np.nan
+        imp_improv = safe_val(imp, "impact_improvement") if isinstance(imp, dict) else np.nan
+        per_ball_a.append(per_ball)
+        per_inn_a.append(per_inn)
+        imp_improv_a.append(imp_improv)
+
     return {
-        'intent_dict':       load_pickle('data/intents.bin'),
-        'p_intent':          load_pickle('data/paceintents.bin'),
-        's_intent':          load_pickle('data/spinintents.bin'),
-        'p_fshot':           load_pickle('data/pacefshots.bin'),
-        's_fshot':           load_pickle('data/spinfshots.bin'),
-        'fshot_dict':        load_pickle('data/fshots.bin'),
-        'gchar':             load_pickle('data/ground_char.bin'),
-        'phase_experience':  load_pickle('data/phase_breakdown.bin'),
-        'negdur':            load_pickle('data/negative_dur.bin'),
-        'bat_rel':           load_pickle('data/bat_relief.bin')
+        "intent_pace": np.array(ipace, dtype=float),
+        "intent_spin": np.array(isp, dtype=float),
+        "intent_overall": np.array(iov, dtype=float),
+        "rel_pace": np.array(rel_pace_a, dtype=float),
+        "rel_spin": np.array(rel_spin_a, dtype=float),
+        "rel_overall": np.array(rel_overall_a, dtype=float),
+        "neg_dur": np.array(negdur_a, dtype=float),
+        "per_ball": np.array(per_ball_a, dtype=float),
+        "per_inn": np.array(per_inn_a, dtype=float),
+        "imp_improv": np.array(imp_improv_a, dtype=float)
     }
 
-planner = load_planner_data()
-intent_dict      = planner['intent_dict']
-p_intent         = planner['p_intent']
-s_intent         = planner['s_intent']
-p_fshot          = planner['p_fshot']
-s_fshot          = planner['s_fshot']
-fshot_dict       = planner['fshot_dict']
-gchar            = planner['gchar']
-phase_experience = planner['phase_experience']
-negdur           = planner['negdur']
-batter_stats     = planner['bat_rel']
+metric_arrays = build_metric_arrays(batter_list)
+n_batters = len(batter_list)
 
-# phase mapping
-phase_mapping = {
-    i: "Powerplay (1-6 overs)"    if i <= 6 else
-       "Middle (7-11 overs)"      if i <= 11 else
-       "Middle (12-16 overs)"     if i <= 16 else
-       "Death (17-20 overs)"
-    for i in range(1, 21)
+# -------------------- Streamlit UI --------------------
+st.set_page_config(page_title="Cricket Analytics", layout="wide")
+st.markdown("""
+    <style>
+      body { background: #ffffff; }
+      .big-title { font-family: 'Helvetica Neue', Arial, sans-serif; font-size:28px; font-weight:700; margin-bottom:6px;}
+      .subtitle { color: #666; margin-bottom:18px; font-size:14px; }
+      .metric-label { color:#444; font-weight:600; }
+      .small { color:#666; font-size:0.9rem; }
+      .card { background: #fff; border-radius:8px; padding:12px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+      .metric-val { font-size:1.05rem; font-weight:700; }
+    </style>
+""", unsafe_allow_html=True)
+
+st.markdown('<div class="big-title">Cricket Analytics Dashboard</div>', unsafe_allow_html=True)
+st.markdown('<div class="subtitle">Intent / Reliability and Impact metrics — search and compare players</div>', unsafe_allow_html=True)
+
+# ---- Search + suggestion-like behavior ----
+# single selectbox with built-in filtering
+batter = st.selectbox("Search or select batter:", options=batter_list, index=0, key="batter_select")
+
+
+    # Compute values for selected batter
+    # intents
+intent_pace = safe_val(intents[batter], "pace")
+intent_spin = safe_val(intents[batter], "spin")
+intent_overall = np.nanmean([x for x in (intent_pace, intent_spin) if not np.isnan(x)]) if not (np.isnan(intent_pace) and np.isnan(intent_spin)) else np.nan
+
+# reliability
+fs_p = safe_val(fshots[batter], "pace")
+fs_s = safe_val(fshots[batter], "spin")
+rel_pace = np.nan if fs_p == 0 or np.isnan(fs_p) else 1.0 / fs_p
+rel_spin = np.nan if fs_s == 0 or np.isnan(fs_s) else 1.0 / fs_s
+rel_overall = np.nanmean([x for x in (rel_pace, rel_spin) if not np.isnan(x)]) if not (np.isnan(rel_pace) and np.isnan(rel_spin)) else np.nan
+
+intrel_pace = intent_pace * rel_pace if not (np.isnan(intent_pace) or np.isnan(rel_pace)) else np.nan
+intrel_spin = intent_spin * rel_spin if not (np.isnan(intent_spin) or np.isnan(rel_spin)) else np.nan
+intrel_overall = intent_overall * rel_overall if not (np.isnan(intent_overall) or np.isnan(rel_overall)) else np.nan
+
+# impact metrics
+neg_dur_v = float(negative_dur.get(batter, np.nan)) if batter in negative_dur else np.nan
+imp = impact_stats.get(batter, {})
+per_ball_v = safe_val(imp, "per_ball_impact")
+per_inn_v = safe_val(imp, "per_inn_impact")
+imp_improv_v = safe_val(imp, "impact_improvement")
+
+# -------------------- Percentiles --------------------
+# Prepare arrays for percentiles
+ma = metric_arrays
+p_intent_pace = percentile_better(intent_pace, ma["intent_pace"], higher_is_better=True)
+p_intent_spin = percentile_better(intent_spin, ma["intent_spin"], higher_is_better=True)
+p_intent_overall = percentile_better(intent_overall, ma["intent_overall"], higher_is_better=True)
+
+p_rel_pace = percentile_better(rel_pace, ma["rel_pace"], higher_is_better=True)
+p_rel_spin = percentile_better(rel_spin, ma["rel_spin"], higher_is_better=True)
+p_rel_overall = percentile_better(rel_overall, ma["rel_overall"], higher_is_better=True)
+
+p_intrel_pace = percentile_better(intrel_pace, ma["intent_pace"] * ma["rel_pace"], higher_is_better=True) if (ma["intent_pace"].size and ma["rel_pace"].size) else np.nan
+p_intrel_spin = percentile_better(intrel_spin, ma["intent_spin"] * ma["rel_spin"], higher_is_better=True) if (ma["intent_spin"].size and ma["rel_spin"].size) else np.nan
+p_intrel_overall = percentile_better(intrel_overall, ma["intent_overall"] * ma["rel_overall"], higher_is_better=True) if (ma["intent_overall"].size and ma["rel_overall"].size) else np.nan
+
+# Impact tab percentiles
+p_neg_dur = percentile_better(neg_dur_v, ma["neg_dur"], higher_is_better=False)  # lower is better
+p_per_ball = percentile_better(per_ball_v, ma["per_ball"], higher_is_better=True)
+p_per_inn = percentile_better(per_inn_v, ma["per_inn"], higher_is_better=True)
+p_imp_improv = percentile_better(imp_improv_v, ma["imp_improv"], higher_is_better=True)
+
+# Average percentiles for each tab
+# Int-Rel average uses: intent_overall, rel_overall, intrel_overall
+list_intrel_pct = [p for p in [p_intent_overall, p_rel_overall, p_intrel_overall] if not np.isnan(p)]
+avg_intrel_pct = float(np.nanmean(list_intrel_pct)) if list_intrel_pct else np.nan
+
+# Int Impact average uses: negative duration (inverted percentile), per_ball, per_inn, improvement
+list_impact_pct = [p for p in [p_neg_dur, p_per_ball, p_per_inn, p_imp_improv] if not np.isnan(p)]
+avg_impact_pct = float(np.nanmean(list_impact_pct)) if list_impact_pct else np.nan
+
+# -------------------- Display --------------------
+# show small header with batter name
+st.markdown(f"### {batter}", unsafe_allow_html=True)
+st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+
+tab1, tab2 = st.tabs(["Int-Rel", "Int Impact"])
+
+# ─── Custom CSS for Metrics ─────────────────────────────────────────────
+def metric_gradient_html(val, text_html):
+    """
+    val: numeric value (0-100 ideally)
+    text_html: the HTML inside the div (value + % better)
+    returns HTML with gradient background & masked fill portion
+    """
+    if np.isnan(val):
+        val = 0.0  # treat NaN as 0 for mask
+    
+    pct = float(max(0.0, min(100.0, val)))
+
+    # Full gradient background & mask logic
+    return f"""
+    <div class='metric-val' style='position:relative; overflow:hidden;'>
+      <!-- full gradient background -->
+      <div style="position:absolute; inset:0;
+                  background: linear-gradient(90deg, #e74c3c 0%, #f1c40f 50%, #2ecc71 100%);
+                  z-index:0;"></div>
+
+      <!-- mask for unfilled portion -->
+      <div style="position:absolute; top:0; bottom:0; left:{pct}%; right:0;
+                  background:#f7f9fa; z-index:1;"></div>
+
+      <!-- text on top -->
+      <div style="position:relative; z-index:2;">
+        {text_html}
+      </div>
+    </div>
+    """
+
+
+# ─── Styles ───────────────────────────────────────────────────────────
+st.markdown("""
+<style>
+.metric-block {
+    margin-bottom:10px;
 }
-
-
-def plot_intent_impact(batter_name):
-    if batter_name not in batter_stats:
-        print("Batter not found.")
-        return None
-    
-    batter_data        = batter_stats[batter_name]
-    counts             = batter_data["batter_ith_ball_count"]
-    total_runs         = batter_data["batter_ith_ball_total_runs"]
-    non_striker_runs   = batter_data["non_striker_ith_ball_total_runs"]
-    
-    valid_balls = sorted(i for i in counts if counts[i] >= 5)
-    if not valid_balls:
-        print("No data with count >= 5.")
-        return None
-    
-    batter_rpb      = np.array([total_runs[i]/counts[i] for i in valid_balls])
-    non_striker_rpb = np.array([non_striker_runs[i]/counts[i] for i in valid_balls])
-    intent_impact   = np.cumsum(batter_rpb - non_striker_rpb)
-    
-    min_balls_no_negative = None
-    for idx, val in enumerate(intent_impact):
-        if val >= 0 and np.all(intent_impact[idx:] >= 0):
-            min_balls_no_negative = valid_balls[idx]
-            break
-
-    # --- create fig & ax explicitly ---
-    fig, ax = plt.subplots(figsize=(12, 6))
-    sns.set_theme(style="darkgrid")
-    sns.lineplot(
-        x=valid_balls,
-        y=intent_impact,
-        linewidth=2.5,
-        label=f'{batter_name} Intent Impact',
-        color='royalblue',
-        ax=ax
-    )
-    ax.axhline(0, color='gray', linestyle='--', linewidth=1.2, alpha=0.8)
-    if min_balls_no_negative is not None:
-        ax.axvline(
-            min_balls_no_negative,
-            color='crimson',
-            linestyle='--',
-            linewidth=2,
-            label=f'Neg. Impact Duration – {min_balls_no_negative} Balls'
-        )
-    ax.set_xlabel("Balls Faced", fontsize=14, fontweight='bold')
-    ax.set_ylabel("Cumulative Intent Impact", fontsize=14, fontweight='bold')
-    ax.set_title(f"Intent Impact Progression for {batter_name}", fontsize=16, fontweight='bold')
-    ax.legend(fontsize=12, frameon=True, loc="upper left")
-    fig.tight_layout()
-    
-    return fig
-
-
-def plot_int_wagons2(batter, minmag, max_magnitude, percentile):
-    bin_file_path = f'{match_type}/vectorsnorm.bin'
-
-    with open(bin_file_path, 'rb') as bin_file:
-        vecdic = pickle.load(bin_file)
-
-    vectors = vecdic[batter]['evs']
-    list1 = vecdic[batter]['vectors']
-    bf = len(vectors)
-    normal_vecs = []
-    boundary_vecs = []
-    all_plotted_vecs = []
-
-    for i in range(len(list1)):
-        if np.linalg.norm(vectors[i]) > np.linalg.norm(list1[i]) and np.linalg.norm(list1[i]) >= minmag:
-            vec = vectors[i]
-            norm = np.linalg.norm(vec)
-            clipped = (
-                vec[0] if norm <= max_magnitude else max_magnitude * (vec[0] / norm),
-                vec[1] if norm <= max_magnitude else max_magnitude * (vec[1] / norm)
-            )
-            all_plotted_vecs.append(clipped)
-            if np.linalg.norm(list1[i]) in [4, 6]:
-                boundary_vecs.append(clipped)
-            else:
-                normal_vecs.append(clipped)
-
-    x_normal = [v[0] for v in normal_vecs]
-    y_normal = [v[1] for v in normal_vecs]
-    x_boundary = [v[0] for v in boundary_vecs]
-    y_boundary = [v[1] for v in boundary_vecs]
-
-    origin_x = np.zeros(len(normal_vecs) + len(boundary_vecs))
-    origin_y = np.zeros(len(normal_vecs) + len(boundary_vecs))
-
-    fig, ax = plt.subplots(figsize=(8, 8))
-    fig.patch.set_facecolor('green')
-    ax.set_facecolor('green')
-    ax.axis('off')
-
-    # Plot boundary shots first
-    plt.quiver(
-        origin_x[len(normal_vecs):], origin_y[len(normal_vecs):],
-        x_boundary, y_boundary,
-        angles='xy', scale_units='xy', scale=1, color='red', alpha=0.9,
-        headwidth=1, headlength=0, label='Boundaries (4s/6s)'
-    )
-
-    # Plot normal shots
-    plt.quiver(
-        origin_x[:len(normal_vecs)], origin_y[:len(normal_vecs)],
-        x_normal, y_normal,
-        angles='xy', scale_units='xy', scale=1, color='blue', alpha=0.7,
-        headwidth=1, headlength=0
-    )
-
-    # Circular max magnitude boundary
-    circle = plt.Circle((0, 0), max_magnitude, color='white', fill=False, linewidth=2)
-    ax.add_artist(circle)
-
-    # Percentile circle
-    if all_plotted_vecs:
-        percentile_magnitude = np.percentile([np.linalg.norm([v[0], v[1]]) for v in all_plotted_vecs], percentile)
-        percentile_magnitude = 7.93
-        intersection_points = []
-
-        for vec in all_plotted_vecs:
-            norm = np.linalg.norm(vec)
-            if norm >= percentile_magnitude:
-                scale = percentile_magnitude / norm
-                intersect_point = (vec[0] * scale, vec[1] * scale)
-                intersection_points.append(intersect_point)
-
-        if len(intersection_points) > 1:
-            intersection_points = np.array(intersection_points)
-            angles = np.arctan2(intersection_points[:, 1], intersection_points[:, 0])
-            sorted_indices = np.argsort(angles)
-            sorted_points = intersection_points[sorted_indices]
-
-            arc_chain = [sorted_points[0]]
-            arc_lines = []
-
-            for i in range(1, len(sorted_points)):
-                prev = sorted_points[i - 1]
-                curr = sorted_points[i]
-                dist = np.linalg.norm(curr - prev)
-
-                if dist < 2*(50/np.sqrt(len(vectors))):
-                    arc_chain.append(curr)
-                else:
-                    if len(arc_chain) >= 2:
-                        arc_chain_np = np.array(arc_chain)
-                        dists = np.linalg.norm(np.diff(arc_chain_np, axis=0), axis=1)
-                        if np.sum(dists) >= 2:
-                            arc_lines.append(arc_chain)
-                    arc_chain = [curr]
-
-            if len(arc_chain) >= 2:
-                arc_chain_np = np.array(arc_chain)
-                dists = np.linalg.norm(np.diff(arc_chain_np, axis=0), axis=1)
-                if np.sum(dists) >= 2:
-                    arc_lines.append(arc_chain)
-
-            for chain in arc_lines:
-                xs, ys = zip(*chain)
-                ax.plot(xs, ys, color='black', linewidth=2)
-
-    ax.arrow(0, -10, 0, 10, color='white', width=0.2, head_width=1, head_length=1, length_includes_head=True)
-    ax.text(0, -12, "Batter Facing", color='white', fontsize=12, ha='center')
-
-    ax.set_xlim(-max_magnitude, max_magnitude)
-    ax.set_ylim(-max_magnitude, max_magnitude)
-    ax.set_aspect('equal')
-    plt.gca().invert_yaxis()
-
-    legend = ax.legend(loc='upper right', frameon=True, facecolor='white')
-    black_line_legend = Line2D([0], [0], color='black', linewidth=2, label='Regions of Strength')
-    handles, labels = ax.get_legend_handles_labels()
-    ax.legend(handles + [black_line_legend], labels + ['Regions of Strength'],
-              loc='upper right', frameon=True, facecolor='white')
-    for text in legend.get_texts():
-        text.set_color('black')
-
-    plt.suptitle(f"{batter} Intelligent Wagon Wheel", fontsize=16, color='white', weight='bold')
-    # The function shows the plot as-is
-    plt.show()
-
-def get_top_3_overs(batter, ground_name, num_spinners, num_pacers, n):
-    acc = np.zeros(120)
-    for s_ball in range(120):
-        bfaced = 0
-        intent = 0
-        for ball in range(s_ball, 120):
-            bfaced += 1
-            overnum = (ball // 6) + 1
-            phase = phase_mapping[overnum]
-            paceweight = np.power(gchar[ground_name][overnum - 1] / 100, 1.5)
-            spinweight = np.power(1 - gchar[ground_name][overnum - 1] / 100, 1.5)
-            spin_prob = spinweight * (num_spinners / (num_spinners + num_pacers))
-            pace_prob = paceweight * (num_pacers / (num_spinners + num_pacers))
-            total_prob = pace_prob + spin_prob
-            pace_prob /= total_prob
-            spin_prob /= total_prob
-
-            def get_metric(intent_data, fallback, key):
-                try:
-                    if intent_data['othbatballs'][overnum - 1] == 0 \
-                    or intent_data['batballs'][overnum - 1] == 0 \
-                    or intent_data['othbatruns'][overnum - 1] == 0:
-                        return fallback[batter][key]['1-20']
-                    return (intent_data['batruns'][overnum - 1] /
-                            intent_data['batballs'][overnum - 1]) / \
-                           (intent_data['othbatruns'][overnum - 1] /
-                            intent_data['othbatballs'][overnum - 1])
-                except:
-                    return fallback[batter][key]['1-20']
-
-            def get_fshot(fshot_data, fallback, key):
-                try:
-                    if fshot_data['othbatballs'][overnum - 1] == 0 \
-                    or fshot_data['batballs'][overnum - 1] == 0 \
-                    or fshot_data['othbatshots'][overnum - 1] == 0 \
-                    or fshot_data['batshots'][overnum - 1] == 0:
-                        return fallback[batter][key]['1-20']
-                    return (fshot_data['batshots'][overnum - 1] /
-                            fshot_data['batballs'][overnum - 1]) / \
-                           (fshot_data['othbatshots'][overnum - 1] /
-                            fshot_data['othbatballs'][overnum - 1])
-                except:
-                    return fallback[batter][key]['1-20']
-
-            spin_int = get_metric(s_intent[batter], intent_dict, 'spin')
-            pace_int = get_metric(p_intent[batter], intent_dict, 'pace')
-            spin_fs  = get_fshot(s_fshot[batter], fshot_dict, 'spin')
-            pace_fs  = get_fshot(p_fshot[batter], fshot_dict, 'pace')
-
-            if bfaced <= negdur[batter]:
-                spin_int = pace_int = 0
-            if spin_int < 0.95:
-                spin_int = 0
-            if pace_int < 0.95:
-                pace_int = 0
-
-            phase_w = phase_experience[batter][phase] / 100
-            intent += (
-                pace_int * phase_w * pace_prob / np.sqrt(pace_fs) +
-                spin_int * phase_w * spin_prob / np.sqrt(spin_fs)
-            )
-
-        acc[s_ball] = intent / (120 - s_ball)
-
-    over_avgs    = [np.mean(acc[i:i+6]) for i in range(0, 120, 6)]
-    top_indices  = np.argsort(over_avgs)[-n:][::-1]
-    return [(i+1, over_avgs[i]) for i in top_indices]
-
-
-# --- Main Dashboard ---
-
-
-# --- Load core stats ---
-FILES = {
-    "Intent & Reliability":      "data/t20_intent_reliability_stats.bin",
-    "Intent Impact Metrics":     "data/batter_intent_stats.bin",
-    "360° Shot Metrics":         "data/t20_batter_stats_360.bin",
-    "Entropy Focus":             "data/t20_entropy_focus.bin",
-    "spin durations":            "data/negative_dur_spin.bin",
-    "pace durations":            "data/negative_dur_pace.bin",
-    'metric_percentiles':        "data/metric_percentiles.bin"
-
-    
-
-
+.metric-name {
+    font-size:0.95rem;
+    font-weight:600;
+    color:#444;
+    margin-bottom:2px;
 }
-
-@st.cache_data
-def load_core_stats(files_map):
-    stats = {}
-    # Load each .bin into stats[label]
-    for label, path in files_map.items():
-        p = Path(path)
-        if not p.exists():
-            st.error(f"❌ File not found: {path}")
-            stats[label] = {}
-        else:
-            with open(p, "rb") as f:
-                stats[label] = pickle.load(f)
-
-    # Build list of key‐sets for all sections *except* metric_percentiles
-    relevant_sets = [
-        set(d.keys())
-        for label, d in stats.items()
-        if label != "metric_percentiles" and isinstance(d, dict)
-    ]
-
-    # Compute intersection only over those relevant sets
-    common = sorted(set.intersection(*relevant_sets)) if relevant_sets else []
-
-    return stats, common
-
-
-stats_dicts, common_batters = load_core_stats(FILES)
-
-st.sidebar.title("Select Batter")
-if not common_batters:
-    st.sidebar.warning("No common batters found.")
-    st.stop()
-batter = st.sidebar.selectbox("Batter", common_batters)
-
-# rename maps omitted for brevity (use same as before)
-rename_maps = {
-    "Intent & Reliability": {
-        "pace_intent":      "Pace Intent",
-        "pace_reliability": "Pace Reliability",
-        "pace_int_rel":     "Pace Int-Rel",
-        "spin_intent":      "Spin Intent",
-        "spin_reliability": "Spin Reliability",
-        "spin_int_rel":     "Spin Int-Rel",
-        "avg_intent":       "Avg Intent",
-        "avg_reliability":  "Avg Reliability",
-        "avg_int_rel":      "Avg Int-Rel",
-    },
-    "Intent Impact Metrics": {
-        "final_intent_impact":      "Final Intent Impact",
-        "impact_acceleration":      "Impact Acceleration",
-        "negative_impact_duration": "Neg. Impact Duration",
-        "impact_improvement":       "Impact Improvement",
-        "improvement_rate":         "Improvement Rate",
-        "improvement_pct":          "Improvement %",
-    },
-    "360° Shot Metrics": {
-        "score360":               "360 Score",
-        "ground_coverage_pct":    "Ground Coverage",
-        "audacity":               "Difficult Shot Execution",
-        "aggressive_bp_pct":      "Boundary % on Difficult Shots",
-        "overall_bp_pct":         "Overall Boundary %",
-        "diff_shot_effect":       "Difficult Shot Effect",
-    },
-    "Entropy Focus": {
-        "primary_focus":     f"Primary Focus against {batter}",
-        "least_affected_by": "Least Affected By",
-    }
+.metric-val {
+    font-size:1.1rem;
+    font-weight:700;
+    color:#111;
+    padding:4px 6px;
+    border-radius:4px;
+    display:inline-block;
 }
+.metric-val .small {
+    font-size:0.8rem;
+    color:#222;
+    margin-left:4px;
+}
+.section-title {
+    margin-bottom:8px;
+    font-weight:700;
+    font-size:1.1rem;
+    color:#333;
+}
+</style>
+""", unsafe_allow_html=True)
 
-def make_df(section_label, entry, percentiles, batter):
-    # build base df
-    if section_label=='Entropy Focus':
-        colval = 'Value'
-    else:
-        colval = "Value (Percentile)" 
-    df = pd.DataFrame.from_dict(entry, orient="index", columns=[colval])
-    df.index.name = "Metric"
-    df = df.rename(index=rename_maps.get(section_label, {}))
+# ─── TAB 1 ────────────────────────────────────────────────────────────
+with tab1:
+    st.markdown("<div class='section-title' style='color:white;'>Overall Int-Rel Score</div>", unsafe_allow_html=True)
+    st.markdown(colored_bar_html(round(avg_intrel_pct, 2)), unsafe_allow_html=True)
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
-    # for each row, if numeric, append percentile in brackets
-    def fmt(val, raw_metric):
-        if isinstance(val, numbers.Number):
-            p = percentiles.get(section_label, {}) \
-                           .get(batter, {}) \
-                           .get(raw_metric, None)
-            if p is not None:
-                return f"{val:.2f} ({p:.0f}%)"
-            else:
-                return f"{val:.2f}"
-        return val
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown("<div class='metric-name' style='color:white;'>Intent (Pace)</div>", unsafe_allow_html=True)
+        st.markdown(metric_gradient_html(p_intent_pace, f"{round(intent_pace,2) if not np.isnan(intent_pace) else '—'} <span class='small'>({'' if np.isnan(p_intent_pace) else f'{round(p_intent_pace,2)}% better'})</span>"), unsafe_allow_html=True)
 
-    # apply formatting: need raw_metric names in same order as df.index
-    # so map df.index back to raw_metric via invert rename_map
-    inv_map = {v:k for k,v in rename_maps.get(section_label, {}).items()}
-    raw_metrics = [inv_map.get(m, m) for m in df.index]
-    df[colval] = [
-        fmt(df.loc[df.index[i], colval], raw_metrics[i])
-        for i in range(len(df))
-    ]
+        st.markdown("<div class='metric-name' style='color:white;'>Reliability (Pace)</div>", unsafe_allow_html=True)
+        st.markdown(metric_gradient_html(p_rel_pace, f"{round(rel_pace,2) if not np.isnan(rel_pace) else '—'} <span class='small'>({'' if np.isnan(p_rel_pace) else f'{round(p_rel_pace,2)}% better'})</span>"), unsafe_allow_html=True)
 
-    return df
+        st.markdown("<div class='metric-name' style='color:white;'>Int-Rel (Pace)</div>", unsafe_allow_html=True)
+        st.markdown(metric_gradient_html(p_intrel_pace, f"{round(intrel_pace,2) if not np.isnan(intrel_pace) else '—'} <span class='small'>({'' if np.isnan(p_intrel_pace) else f'{round(p_intrel_pace,2)}% better'})</span>"), unsafe_allow_html=True)
 
+    with col2:
+        st.markdown("<div class='metric-name' style='color:white;'>Intent (Spin)</div>", unsafe_allow_html=True)
+        st.markdown(metric_gradient_html(p_intent_spin, f"{round(intent_spin,2) if not np.isnan(intent_spin) else '—'} <span class='small'>({'' if np.isnan(p_intent_spin) else f'{round(p_intent_spin,2)}% better'})</span>"), unsafe_allow_html=True)
 
-tabs = st.tabs([
-    "Overview",
-    "Intent & Reliability",
-    "Intent Impact Metrics",
-    "360° Shot Metrics",
-    "Strategy Values"
-])
+        st.markdown("<div class='metric-name' style='color:white;'>Reliability (Spin)</div>", unsafe_allow_html=True)
+        st.markdown(metric_gradient_html(p_rel_spin, f"{round(rel_spin,2) if not np.isnan(rel_spin) else '—'} <span class='small'>({'' if np.isnan(p_rel_spin) else f'{round(p_rel_spin,2)}% better'})</span>"), unsafe_allow_html=True)
 
-with tabs[0]:
-    st.subheader(f"Overview: {batter}")
+        st.markdown("<div class='metric-name' style='color:white;'>Int-Rel (Spin)</div>", unsafe_allow_html=True)
+        st.markdown(metric_gradient_html(p_intrel_spin, f"{round(intrel_spin,2) if not np.isnan(intrel_spin) else '—'} <span class='small'>({'' if np.isnan(p_intrel_spin) else f'{round(p_intrel_spin,2)}% better'})</span>"), unsafe_allow_html=True)
 
-    # --- compute three average percentiles ---
-    pct = stats_dicts["metric_percentiles"]
-    ir_vals     = list(pct["Intent & Reliability"].get(batter, {}).values())
-    imp_vals    = list(pct["Intent Impact Metrics"].get(batter, {}).values())
-    shot_vals   = list(pct["360° Shot Metrics"].get(batter, {}).values())
-    ir_avg  = np.mean(ir_vals)  if ir_vals  else 0
-    imp_avg = np.mean(imp_vals) if imp_vals else 0
-    sh_avg  = np.mean(shot_vals) if shot_vals else 0
+    with col3:
+        st.markdown("<div class='metric-name' style='color:white;'>Intent (Overall)</div>", unsafe_allow_html=True)
+        st.markdown(metric_gradient_html(p_intent_overall, f"{round(intent_overall,2) if not np.isnan(intent_overall) else '—'} <span class='small'>({'' if np.isnan(p_intent_overall) else f'{round(p_intent_overall,2)}% better'})</span>"), unsafe_allow_html=True)
 
-    # --- gauge helper ---
-    # --- gauge helper with transparent background ---
-    import matplotlib.cm as cm
+        st.markdown("<div class='metric-name' style='color:white;'>Reliability (Overall)</div>", unsafe_allow_html=True)
+        st.markdown(metric_gradient_html(p_rel_overall, f"{round(rel_overall,2) if not np.isnan(rel_overall) else '—'} <span class='small'>({'' if np.isnan(p_rel_overall) else f'{round(p_rel_overall,2)}% better'})</span>"), unsafe_allow_html=True)
 
-    def gauge_chart(value, title):
-        # detect theme: 'light' or 'dark'
-        
-        # create transparent figure & axes
-        fig, ax = plt.subplots(
-            figsize=(2.2, 2.2),
-            subplot_kw={'aspect':'equal'},
-            facecolor='none'
-        )
-        ax.set_facecolor('none')
+        st.markdown("<div class='metric-name' style='color:white;'>Int-Rel (Overall)</div>", unsafe_allow_html=True)
+        st.markdown(metric_gradient_html(p_intrel_overall, f"{round(intrel_overall,2) if not np.isnan(intrel_overall) else '—'} <span class='small'>({'' if np.isnan(p_intrel_overall) else f'{round(p_intrel_overall,2)}% better'})</span>"), unsafe_allow_html=True)
 
-        # pick slice color
-        cmap = cm.get_cmap('YlOrRd')
-        slice_color = cmap(value / 100)
+# ─── TAB 2 ────────────────────────────────────────────────────────────
+with tab2:
+    st.markdown("<div class='section-title' style='color:white;'>Overall Impact Score</div>", unsafe_allow_html=True)
+    st.markdown(colored_bar_html(round(avg_impact_pct, 2)), unsafe_allow_html=True)
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
-        # draw donut
-        ax.pie(
-            [value, 100 - value],
-            colors=[slice_color, 'lightgray'],
-            startangle=90,
-            counterclock=False,
-            wedgeprops={'width':0.3, 'edgecolor':'white'}
-        )
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.markdown("<div class='metric-name' style='color:white;'>Negative Duration</div>", unsafe_allow_html=True)
+        st.markdown(metric_gradient_html(p_neg_dur, f"{round(neg_dur_v,2) if not np.isnan(neg_dur_v) else '—'} <span class='small'>({'' if np.isnan(p_neg_dur) else f'{round(p_neg_dur,2)}% better'})</span>"), unsafe_allow_html=True)
+    with c2:
+        st.markdown("<div class='metric-name' style='color:white;'>Per Ball Impact</div>", unsafe_allow_html=True)
+        st.markdown(metric_gradient_html(p_per_ball, f"{round(per_ball_v,2) if not np.isnan(per_ball_v) else '—'} <span class='small'>({'' if np.isnan(p_per_ball) else f'{round(p_per_ball,2)}% better'})</span>"), unsafe_allow_html=True)
+    with c3:
+        st.markdown("<div class='metric-name' style='color:white;'>Per Innings Impact</div>", unsafe_allow_html=True)
+        st.markdown(metric_gradient_html(p_per_inn, f"{round(per_inn_v,2) if not np.isnan(per_inn_v) else '—'} <span class='small'>({'' if np.isnan(p_per_inn) else f'{round(p_per_inn,2)}% better'})</span>"), unsafe_allow_html=True)
+    with c4:
+        st.markdown("<div class='metric-name' style='color:white;'>Impact Improvement</div>", unsafe_allow_html=True)
+        st.markdown(metric_gradient_html(p_imp_improv, f"{round(imp_improv_v,2) if not np.isnan(imp_improv_v) else '—'} <span class='small'>({'' if np.isnan(p_imp_improv) else f'{round(p_imp_improv,2)}% better'})</span>"), unsafe_allow_html=True)
 
-        # center label
-        ax.annotate(
-            f"{value:.0f}%", 
-            xy=(0,0),
-            ha='center', va='center',
-            fontsize=14, fontweight='bold',
-            color='white'
-        )
-
-        # title
-        ax.set_title(
-            title,
-            fontsize=10, pad=12,
-            color='white'
-        )
-
-        ax.axis('off')
-        fig.patch.set_alpha(0)
-        return fig
-
-
-
-    # --- render three gauges ---
-    c1, c2, c3 = st.columns(3)
-    c1.pyplot(gauge_chart(ir_avg,  "Intent & Reliability Profile"))
-    c2.pyplot(gauge_chart(imp_avg, "Impact Profile"))
-    c3.pyplot(gauge_chart(sh_avg,  "360° Profile"))
-
-    st.markdown("Use the tabs above to dive into each analysis in detail.")
-
-with tabs[1]:
-    st.subheader("Intent & Reliability")
-    df_ir = make_df(
-    "Intent & Reliability",
-    stats_dicts["Intent & Reliability"][batter],
-    stats_dicts["metric_percentiles"],
-    batter
-    )
-    st.dataframe(df_ir, use_container_width=True)
-
-    
-
-with tabs[2]:
-    st.subheader("Intent Impact Metrics")
-    df_ir = make_df(
-    "Intent Impact Metrics",
-    stats_dicts["Intent Impact Metrics"][batter],
-    stats_dicts["metric_percentiles"],
-    batter
-    )  
-    st.dataframe(df_ir, use_container_width=True)
-
-    
-
-    st.markdown("### Intent Impact Progression")
-    fig = plot_intent_impact(batter)
-    if fig:
-        st.pyplot(fig)
-    else:
-        st.write("_No plot available._")
-
-
-
-with tabs[3]:
-    st.subheader("360° Shot Metrics")
-    df_ir = make_df(
-    "360° Shot Metrics",
-    stats_dicts["360° Shot Metrics"][batter],
-    stats_dicts["metric_percentiles"],
-    batter
-    )
-    st.dataframe(df_ir, use_container_width=True)
-
-
-    # ======== Here is your unmodified plot call ========
-    # Set these to whatever you were using alongside your function
-    match_type    = 'data'
-    minmag        = 0
-    max_magnitude = 35
-    percentile    = 90
-
-    # Generate and render the plot exactly as in your code
-    plot_int_wagons2(batter, minmag, max_magnitude, percentile)
-    st.pyplot(plt)
-
-with tabs[4]:
-    st.subheader("Key Performance Factors")
-    st.dataframe(make_df("Entropy Focus", stats_dicts["Entropy Focus"][batter],stats_dicts["metric_percentiles"],
-    batter), use_container_width=True)
-
-    # ── New: Time to Settle metrics ──
-    spin_settle = stats_dicts["spin durations"].get(batter, None)
-    pace_settle = stats_dicts["pace durations"].get(batter, None)
-    col1, col2 = st.columns(2)
-    col1.metric(
-        "Time to Settle vs Spin",
-        f"{int(spin_settle)} balls" if spin_settle is not None else "N/A"
-    )
-    col2.metric(
-        "Time to Settle vs Pace",
-        f"{int(pace_settle)} balls" if pace_settle is not None else "N/A"
-    )
-
-    # ── Entry Points UI ──
-    st.markdown("### Entry Point Calculator")
-    ground_list = ["Neutral Venue"] + [g for g in gchar.keys() if g != "Neutral Venue"]
-    ground      = st.selectbox("Select Ground", ground_list, key="entropy_ground")
-    num_spinners = st.slider("Opposition Spinners", 0, 6, 2, key="entropy_spin")
-    num_pacers   = st.slider("Opposition Pacers",   0, 6, 4, key="entropy_pace")
-
-    if st.button("Calculate Entry Point", key="entropy_btn"):
-        if num_spinners == 0 and num_pacers == 0:
-            st.error("❗ Please select at least one spinner or pacer.")
-        else:
-            entries = get_top_3_overs(batter, ground, num_spinners, num_pacers, 3)
-            st.markdown("---")
-            st.markdown("#### Top 3 Optimal Entry Overs")
-            medals = ["🥇", "🥈", "🥉"]
-            for idx, (over_num, score) in enumerate(entries):
-                st.markdown(f"""
-                    <div style="
-                        background-color:#f0f2f6;
-                        padding:12px 20px;
-                        margin-bottom:10px;
-                        border-left:6px solid #1e90ff;
-                        border-radius:8px;
-                    ">
-                        <h5 style="margin:0; color:#222;">{medals[idx]} <b>Over {over_num}</b></h5>
-                        <p style="margin:0; color:#444;">
-                            Acceleration Score: <code style="font-size:16px;">{score:.4f}</code>
-                        </p>
-                    </div>
-                """, unsafe_allow_html=True)
+st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+st.caption("Percentiles shown are 'percentage of batters this player is better than' (higher is better). For Negative Duration lower is better.")
 
