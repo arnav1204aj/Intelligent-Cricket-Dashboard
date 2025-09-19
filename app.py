@@ -175,7 +175,7 @@ metric_arrays = build_metric_arrays(batter_list)
 n_batters = len(batter_list)
 
 # -------------------- Streamlit UI --------------------
-st.set_page_config(page_title="Cricket Analytics", layout="wide")
+st.set_page_config(page_title="T20 Batting Analytics", layout="wide")
 st.markdown("""
     <style>
       body { background: #ffffff; }
@@ -188,7 +188,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="big-title">Cricket Analytics Dashboard</div>', unsafe_allow_html=True)
+st.markdown('<div class="big-title">T20 Batting Analytics Dashboard</div>', unsafe_allow_html=True)
 st.markdown('<div class="subtitle">Intent / Reliability and Impact metrics — search and compare players</div>', unsafe_allow_html=True)
 
 # ---- Search + suggestion-like behavior ----
@@ -381,5 +381,5 @@ with tab2:
         st.markdown(metric_gradient_html(p_imp_improv, f"{round(imp_improv_v,2) if not np.isnan(imp_improv_v) else '—'} <span class='small'>({'' if np.isnan(p_imp_improv) else f'{round(p_imp_improv,2)}% better'})</span>"), unsafe_allow_html=True)
 
 st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
-st.caption("Percentiles shown are 'percentage of batters this player is better than' (higher is better). For Negative Duration lower is better.")
+st.caption("Percentiles shown are 'percentage of batters this player is better than'.")
 
