@@ -1,0 +1,22 @@
+name: Empty Commit Every 11 Hours
+
+on:
+  schedule:
+    - cron: '0 */11 * * *'
+  workflow_dispatch:
+
+jobs:
+  empty-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create empty commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit --allow-empty -m "Automated empty commit"
+          git push
