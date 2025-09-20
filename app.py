@@ -278,7 +278,7 @@ avg_360_pct = float(np.nanmean(list_360_pct)) if list_360_pct else np.nan
 st.markdown(f"### {batter}", unsafe_allow_html=True)
 st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
 
-tab1, tab2, tab3 = st.tabs(["Int-Rel", "Int Impact", "360 Play"])
+tab1, tab2, tab3, tab4 = st.tabs(["Int-Rel", "Int Impact", "360 Play","Info"])
 
 # ─── Custom CSS for Metrics ─────────────────────────────────────────────
 def metric_gradient_html(val, text_html):
@@ -528,12 +528,35 @@ with tab3:
         unsafe_allow_html=True
     )
 
-    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
-    st.caption("Percentiles shown are 'percentage of batters this player is better than'.")
-    # center align the figure
-    # st.pyplot(fig)
+with tab4:
+    st.markdown(
+        "<div class='section-title' style='color:white;'>Info & More Insights</div>",
+        unsafe_allow_html=True
+    )
 
-    # st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
-    # st.caption("Percentiles shown are 'percentage of batters this player is better than'.")
+    st.markdown("### 📊 Unlocking All Corners of a Circle")
+    st.markdown(
+        "[Click here to read](https://arnavj.substack.com/p/unlocking-all-corners-of-a-circle?r=3er7j9)"
+    )
+
+    st.markdown("### 📝 Intent-Impact")
+    st.markdown(
+        "[Click here to read](https://arnavj.substack.com/publish/posts/detail/159475903?referrer=%2Fpublish%2Fposts%2Fpublished)"
+    )
+
+    st.markdown("---")
+
+    st.markdown(
+        """
+        💡 **For more interesting metrics and insights on cricket**,  
+        follow my Substack here:  
+        [https://arnavj.substack.com/](https://arnavj.substack.com/)
+        """,
+        unsafe_allow_html=True
+    )    
+
+st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+st.caption("Percentiles shown are 'percentage of batters this player is better than'.")
+   
 
 
