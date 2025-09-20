@@ -3,6 +3,7 @@ import streamlit as st
 import pickle
 import os
 import numpy as np
+import matplotlib.pyplot as plt
 from math import isfinite
 
 # -------------------- Helpers --------------------
@@ -90,7 +91,7 @@ def colored_bar_html(pct):
 
 # -------------------- Load data --------------------
 DATA_DIR = "t20_decay"
-required_files = ["fshots.bin", "intents.bin", "negative_dur.bin", "impact_stats.bin"]
+required_files = ["fshots.bin", "intents.bin", "negative_dur.bin", "impact_stats.bin","360.bin",'vectorsnorm.bin']
 for fn in required_files:
     if not os.path.exists(os.path.join(DATA_DIR, fn)):
         raise FileNotFoundError(f"Required file missing: {os.path.join(DATA_DIR, fn)}")
@@ -99,13 +100,16 @@ fshots = load_bin(os.path.join(DATA_DIR, "fshots.bin"))
 intents = load_bin(os.path.join(DATA_DIR, "intents.bin"))
 negative_dur = load_bin(os.path.join(DATA_DIR, "negative_dur.bin"))
 impact_stats = load_bin(os.path.join(DATA_DIR, "impact_stats.bin"))
-
+stats_360 = load_bin(os.path.join(DATA_DIR, "360.bin"))
+vecdic = load_bin(os.path.join(DATA_DIR, "vectorsnorm.bin"))
 # -------------------- Global batter list (intersection) --------------------
 batter_list = sorted(
     set(fshots.keys())
     & set(intents.keys())
     & set(negative_dur.keys())
     & set(impact_stats.keys())
+    & set(stats_360.keys())
+    & set(vecdic.keys())
 )
 
 # -------------------- Precompute arrays for percentiles --------------------
@@ -123,6 +127,8 @@ def build_metric_arrays(b_list):
     per_ball_a = []
     per_inn_a = []
     imp_improv_a = []
+    score_360_a = []
+    audacity_a = []
     for b in b_list:
         # intents
         ip = safe_val(intents[b], "pace")
@@ -158,6 +164,13 @@ def build_metric_arrays(b_list):
         per_inn_a.append(per_inn)
         imp_improv_a.append(imp_improv)
 
+        s360 = stats_360.get(b, {})
+        audacity = safe_val(s360, "audacity") if isinstance(s360, dict) else np.nan
+        score360 = safe_val(s360, "score360") if isinstance(s360, dict) else np.nan
+        audacity_a.append(audacity)
+        score_360_a.append(score360)
+        
+
     return {
         "intent_pace": np.array(ipace, dtype=float),
         "intent_spin": np.array(isp, dtype=float),
@@ -168,7 +181,9 @@ def build_metric_arrays(b_list):
         "neg_dur": np.array(negdur_a, dtype=float),
         "per_ball": np.array(per_ball_a, dtype=float),
         "per_inn": np.array(per_inn_a, dtype=float),
-        "imp_improv": np.array(imp_improv_a, dtype=float)
+        "imp_improv": np.array(imp_improv_a, dtype=float),
+        "audacity":np.array(audacity_a,dtype=float),
+        "score_360":np.array(score_360_a,dtype=float),
     }
 
 metric_arrays = build_metric_arrays(batter_list)
@@ -189,7 +204,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown('<div class="big-title">T20 Batting Analytics Dashboard</div>', unsafe_allow_html=True)
-st.markdown('<div class="subtitle">Intent / Reliability and Impact metrics — search and compare players</div>', unsafe_allow_html=True)
+st.markdown('<div class="subtitle">Intent / Reliability, Impact and 360 play metrics — search and compare players</div>', unsafe_allow_html=True)
 
 # ---- Search + suggestion-like behavior ----
 # single selectbox with built-in filtering
@@ -250,12 +265,20 @@ avg_intrel_pct = float(np.nanmean(list_intrel_pct)) if list_intrel_pct else np.n
 list_impact_pct = [p for p in [p_neg_dur, p_per_ball, p_per_inn, p_imp_improv] if not np.isnan(p)]
 avg_impact_pct = float(np.nanmean(list_impact_pct)) if list_impact_pct else np.nan
 
+audacity_v = safe_val(stats_360[batter], "audacity")
+score360_v = safe_val(stats_360[batter], "score360")
+
+p_audacity = percentile_better(audacity_v, ma["audacity"], higher_is_better=True)
+p_score360 = percentile_better(score360_v, ma["score_360"], higher_is_better=True)
+
+list_360_pct = [p for p in [p_audacity, p_score360] if not np.isnan(p)]
+avg_360_pct = float(np.nanmean(list_360_pct)) if list_360_pct else np.nan
 # -------------------- Display --------------------
 # show small header with batter name
 st.markdown(f"### {batter}", unsafe_allow_html=True)
 st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
 
-tab1, tab2 = st.tabs(["Int-Rel", "Int Impact"])
+tab1, tab2, tab3 = st.tabs(["Int-Rel", "Int Impact", "360 Play"])
 
 # ─── Custom CSS for Metrics ─────────────────────────────────────────────
 def metric_gradient_html(val, text_html):
@@ -325,7 +348,7 @@ st.markdown("""
 
 # ─── TAB 1 ────────────────────────────────────────────────────────────
 with tab1:
-    st.markdown("<div class='section-title' style='color:white;'>Overall Int-Rel Score</div>", unsafe_allow_html=True)
+    st.markdown("<div class='section-title' style='color:white;'>Overall Int-Rel Profile</div>", unsafe_allow_html=True)
     st.markdown(colored_bar_html(round(avg_intrel_pct, 2)), unsafe_allow_html=True)
     st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
@@ -362,7 +385,7 @@ with tab1:
 
 # ─── TAB 2 ────────────────────────────────────────────────────────────
 with tab2:
-    st.markdown("<div class='section-title' style='color:white;'>Overall Impact Score</div>", unsafe_allow_html=True)
+    st.markdown("<div class='section-title' style='color:white;'>Overall Impact Profile</div>", unsafe_allow_html=True)
     st.markdown(colored_bar_html(round(avg_impact_pct, 2)), unsafe_allow_html=True)
     st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
@@ -380,6 +403,137 @@ with tab2:
         st.markdown("<div class='metric-name' style='color:white;'>Impact Improvement</div>", unsafe_allow_html=True)
         st.markdown(metric_gradient_html(p_imp_improv, f"{round(imp_improv_v,2) if not np.isnan(imp_improv_v) else '—'} <span class='small'>({'' if np.isnan(p_imp_improv) else f'{round(p_imp_improv,2)}% better'})</span>"), unsafe_allow_html=True)
 
-st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
-st.caption("Percentiles shown are 'percentage of batters this player is better than'.")
+with tab3:
+    st.markdown("<div class='section-title' style='color:white;'>Overall 360 Play Profile</div>", unsafe_allow_html=True)
+    st.markdown(colored_bar_html(round(avg_360_pct, 2)), unsafe_allow_html=True)
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("<div class='metric-name' style='color:white;'>Avg Shot Difficulty</div>", unsafe_allow_html=True)
+        st.markdown(metric_gradient_html(p_audacity,
+            f"{round(audacity_v,2) if not np.isnan(audacity_v) else '—'} "
+            f"<span class='small'>({'' if np.isnan(p_audacity) else f'{round(p_audacity,2)}% better'})</span>"
+        ), unsafe_allow_html=True)
+
+    with c2:
+        st.markdown("<div class='metric-name' style='color:white;'>360 Score</div>", unsafe_allow_html=True)
+        st.markdown(metric_gradient_html(p_score360,
+            f"{round(score360_v,2) if not np.isnan(score360_v) else '—'} "
+            f"<span class='small'>({'' if np.isnan(p_score360) else f'{round(p_score360,2)}% better'})</span>"
+        ), unsafe_allow_html=True)
+
+    st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+    st.markdown("<div class='section-title' style='color:white;'>Intelligent Wagon Wheel</div>", unsafe_allow_html=True)
+
+    # checkbox for boundaries only
+    
+
+    # --- Plot wagon wheel ---
+    max_magnitude = 35  # already loaded vectorsnorm
+
+    list1 = vecdic[batter]['vectors']
+    evs = vecdic[batter]['evs']
+
+    normal_vecs, boundary_vecs = [], []
+
+    for i in range(len(list1)):
+        if np.linalg.norm(evs[i]) > np.linalg.norm(list1[i]):
+            vec = evs[i]
+            norm = np.linalg.norm(vec)
+            clipped = (
+                vec[0] if norm <= max_magnitude else max_magnitude * (vec[0] / norm),
+                vec[1] if norm <= max_magnitude else max_magnitude * (vec[1] / norm)
+            )
+            if np.linalg.norm(list1[i]) in [4, 6]:
+                boundary_vecs.append(clipped)
+            else:
+                normal_vecs.append(clipped)
+
+    x_normal = [v[0] for v in normal_vecs]
+    y_normal = [v[1] for v in normal_vecs]
+    x_boundary = [v[0] for v in boundary_vecs]
+    y_boundary = [v[1] for v in boundary_vecs]
+
+    origin_x = np.zeros(len(normal_vecs) + len(boundary_vecs))
+    origin_y = np.zeros(len(normal_vecs) + len(boundary_vecs))
+
+    # smaller figure
+    fig, ax = plt.subplots(figsize=(6, 6))
+    fig.patch.set_facecolor('green')
+    ax.set_facecolor('green')
+    ax.axis('off')
+
+    # boundaries
+    plt.quiver(
+        origin_x[len(normal_vecs):], origin_y[len(normal_vecs):],
+        x_boundary, y_boundary,
+        angles='xy', scale_units='xy', scale=1, color='red', alpha=0.9,
+        headwidth=1, headlength=0, label='Boundaries (4s/6s)'
+    )
+
+    # normal shots (only if checkbox is not checked)
+   
+    plt.quiver(
+            origin_x[:len(normal_vecs)], origin_y[:len(normal_vecs)],
+            x_normal, y_normal,
+            angles='xy', scale_units='xy', scale=1, color='red', alpha=0.7,
+            headwidth=1, headlength=0
+    )
+
+    # Circular max magnitude boundary
+    circle = plt.Circle((0, 0), max_magnitude, color='white', fill=False, linewidth=2)
+    ax.add_artist(circle)
+
+    # Batter facing arrow
+    ax.arrow(0, -10, 0, 10, color='white', width=0.2, head_width=1, head_length=1, length_includes_head=True)
+    ax.text(0, -12, "Batter Facing", color='white', fontsize=12, ha='center')
+
+    ax.set_xlim(-max_magnitude-2, max_magnitude+2)
+    ax.set_ylim(-max_magnitude-2, max_magnitude+2)
+    ax.set_aspect('equal')
+    plt.gca().invert_yaxis()
+
+    
+    st.markdown(
+        """
+        <style>
+        .responsive-img {
+            width: 100%;
+            max-width: 600px;  /* prevents overly large */
+            aspect-ratio: 1 / 1; /* keep square shape */
+            margin: auto;
+        }
+        @media (min-width: 900px) {
+            .responsive-img {
+                width: 50%; /* half width on large screens */
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
+    # Render figure as HTML img tag for responsiveness
+    import io
+    import base64
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight")
+    buf.seek(0)
+    img_bytes = buf.getvalue()
+
+    st.markdown(
+        f"<div class='responsive-img'><img src='data:image/png;base64,{base64.b64encode(img_bytes).decode()}' style='width:100%;height:100%;'></div>",
+        unsafe_allow_html=True
+    )
+
+    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+    st.caption("Percentiles shown are 'percentage of batters this player is better than'.")
+    # center align the figure
+    # st.pyplot(fig)
+
+    # st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+    # st.caption("Percentiles shown are 'percentage of batters this player is better than'.")
+
 
