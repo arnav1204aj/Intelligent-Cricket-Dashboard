@@ -82,7 +82,7 @@ def colored_bar_html(pct):
                   transform: translate(-50%, -50%);
                   z-index:2; color:black; font-weight:700; font-size:20px;
                   text-shadow: 0 1px 2px rgba(0,0,0,0.6); padding:0px 8px; border-radius:4px;">
-        {pct:.1f}%
+        {pct:.1f}
       </div>
     </div>
     """
