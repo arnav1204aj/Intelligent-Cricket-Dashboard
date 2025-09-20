@@ -541,7 +541,7 @@ with tab4:
 
     st.markdown("### 📝 Intent-Impact")
     st.markdown(
-        "[Click here to read](https://arnavj.substack.com/publish/posts/detail/159475903?referrer=%2Fpublish%2Fposts%2Fpublished)"
+        "[Click here to read](https://open.substack.com/pub/arnavj/p/solving-the-intent-and-impact-equation?r=3er7j9&utm_campaign=post&utm_medium=web&showWelcomeOnShare=true)"
     )
 
     st.markdown("---")
