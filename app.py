@@ -55,18 +55,50 @@ def percentile_better(value, arr, higher_is_better=True):
     return float(score * 100.0)
 
 def metric_label_html(label, tooltip_template, value):
-    """
-    label: string shown above metric
-    tooltip_template: string with {val} to insert metric value
-    value: actual metric value (float or nan)
-    """
+    import numpy as np
     val_text = "—" if np.isnan(value) else round(value, 2)
     tooltip = tooltip_template.format(val=val_text)
+
     return f"""
-    <div class='metric-name' style='color:white;' title="{tooltip}">
-        {label}
+    <style>
+    .tooltip {{
+      position: relative;
+      display: inline-block;
+      cursor: pointer;
+      z-index: 9999; /* bring above everything */
+    }}
+    .tooltip .tooltiptext {{
+      visibility: hidden;
+      width: 240px;
+      background-color: #333;
+      color: #fff;
+      text-align: center;
+      border-radius: 6px;
+      padding: 6px;
+      position: absolute;
+      z-index: 9999; /* keep on top */
+      bottom: 125%; /* position above the icon */
+      left: 50%;
+      transform: translateX(-50%);
+      opacity: 0;
+      transition: opacity 0.3s;
+    }}
+    /* show when the icon itself is clicked/tapped */
+    .tooltip:focus-within .tooltiptext {{
+      visibility: visible;
+      opacity: 1;
+    }}
+    </style>
+    <div style="display:flex; align-items:center; color:white;">
+      <span style="margin-right:6px;">{label}</span>
+      <div class="tooltip">
+        <span tabindex="0" style="font-weight:bold; font-size:18px; outline:none;">ℹ️</span>
+        <span class="tooltiptext">{tooltip}</span>
+      </div>
     </div>
     """
+
+
 
 
 
