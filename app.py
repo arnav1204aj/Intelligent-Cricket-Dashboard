@@ -54,6 +54,22 @@ def percentile_better(value, arr, higher_is_better=True):
         score = (greater + 0.5 * equal) / arr.size
     return float(score * 100.0)
 
+def metric_label_html(label, tooltip_template, value):
+    """
+    label: string shown above metric
+    tooltip_template: string with {val} to insert metric value
+    value: actual metric value (float or nan)
+    """
+    val_text = "—" if np.isnan(value) else round(value, 2)
+    tooltip = tooltip_template.format(val=val_text)
+    return f"""
+    <div class='metric-name' style='color:white;' title="{tooltip}">
+        {label}
+    </div>
+    """
+
+
+
 def colored_bar_html(pct):
     """Return an HTML snippet drawing a horizontal red->green gradient bar (full gradient across 0..100),
     and mask the right side so only 'pct'% of the gradient is visible as the filled portion.
@@ -91,7 +107,7 @@ def colored_bar_html(pct):
 
 # -------------------- Load data --------------------
 DATA_DIR = "t20_decay"
-required_files = ["fshots.bin", "intents.bin", "negative_dur.bin", "impact_stats.bin","360.bin",'vectorsnorm.bin']
+required_files = ["fshots.bin", "intents.bin", "negative_dur.bin", "impact_stats.bin","360.bin",'vectorsnorm.bin','rlist.bin']
 for fn in required_files:
     if not os.path.exists(os.path.join(DATA_DIR, fn)):
         raise FileNotFoundError(f"Required file missing: {os.path.join(DATA_DIR, fn)}")
@@ -102,6 +118,7 @@ negative_dur = load_bin(os.path.join(DATA_DIR, "negative_dur.bin"))
 impact_stats = load_bin(os.path.join(DATA_DIR, "impact_stats.bin"))
 stats_360 = load_bin(os.path.join(DATA_DIR, "360.bin"))
 vecdic = load_bin(os.path.join(DATA_DIR, "vectorsnorm.bin"))
+# rlist = load_bin(os.path.join(DATA_DIR, "rlist.bin"))
 # -------------------- Global batter list (intersection) --------------------
 batter_list = sorted(
     set(fshots.keys())
@@ -354,34 +371,80 @@ with tab1:
 
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.markdown("<div class='metric-name' style='color:white;'>Intent (Pace)</div>", unsafe_allow_html=True)
-        st.markdown(metric_gradient_html(p_intent_pace, f"{round(intent_pace,2) if not np.isnan(intent_pace) else '—'} <span class='small'>({'' if np.isnan(p_intent_pace) else f'{round(p_intent_pace,2)}% better'})</span>"), unsafe_allow_html=True)
+        st.markdown(metric_label_html("Intent (Pace)",
+            "If non striker plays with a SR of 100, batter plays with a SR of {val}", 100*intent_pace),
+            unsafe_allow_html=True)
+        st.markdown(metric_gradient_html(p_intent_pace,
+            f"{'—' if np.isnan(intent_pace) else round(intent_pace,2)} "
+            f"<span class='small'>({'' if np.isnan(p_intent_pace) else f'{round(p_intent_pace,2)}% better'})</span>"
+        ), unsafe_allow_html=True)
 
-        st.markdown("<div class='metric-name' style='color:white;'>Reliability (Pace)</div>", unsafe_allow_html=True)
-        st.markdown(metric_gradient_html(p_rel_pace, f"{round(rel_pace,2) if not np.isnan(rel_pace) else '—'} <span class='small'>({'' if np.isnan(p_rel_pace) else f'{round(p_rel_pace,2)}% better'})</span>"), unsafe_allow_html=True)
+        st.markdown(metric_label_html("Reliability (Pace)",
+            "If non striker has a control% of 100, batter has a control % of {val}", 100*rel_pace),
+            unsafe_allow_html=True)
+        st.markdown(metric_gradient_html(p_rel_pace,
+            f"{'—' if np.isnan(rel_pace) else round(rel_pace,2)} "
+            f"<span class='small'>({'' if np.isnan(p_rel_pace) else f'{round(p_rel_pace,2)}% better'})</span>"
+        ), unsafe_allow_html=True)
 
-        st.markdown("<div class='metric-name' style='color:white;'>Int-Rel (Pace)</div>", unsafe_allow_html=True)
-        st.markdown(metric_gradient_html(p_intrel_pace, f"{round(intrel_pace,2) if not np.isnan(intrel_pace) else '—'} <span class='small'>({'' if np.isnan(p_intrel_pace) else f'{round(p_intrel_pace,2)}% better'})</span>"), unsafe_allow_html=True)
+        st.markdown(metric_label_html("Int-Rel (Pace)",
+            "A combined score (Intent*Reliability), indicating controlled striking ability. Value={val}", intrel_pace),
+            unsafe_allow_html=True)
+        st.markdown(metric_gradient_html(p_intrel_pace,
+            f"{'—' if np.isnan(intrel_pace) else round(intrel_pace,2)} "
+            f"<span class='small'>({'' if np.isnan(p_intrel_pace) else f'{round(p_intrel_pace,2)}% better'})</span>"
+        ), unsafe_allow_html=True)
 
     with col2:
-        st.markdown("<div class='metric-name' style='color:white;'>Intent (Spin)</div>", unsafe_allow_html=True)
-        st.markdown(metric_gradient_html(p_intent_spin, f"{round(intent_spin,2) if not np.isnan(intent_spin) else '—'} <span class='small'>({'' if np.isnan(p_intent_spin) else f'{round(p_intent_spin,2)}% better'})</span>"), unsafe_allow_html=True)
+        st.markdown(metric_label_html("Intent (Spin)",
+            "If non striker plays with a SR of 100, batter plays with a SR of {val}", 100*intent_spin),
+            unsafe_allow_html=True)
+        st.markdown(metric_gradient_html(p_intent_spin,
+            f"{'—' if np.isnan(intent_spin) else round(intent_spin,2)} "
+            f"<span class='small'>({'' if np.isnan(p_intent_spin) else f'{round(p_intent_spin,2)}% better'})</span>"
+        ), unsafe_allow_html=True)
 
-        st.markdown("<div class='metric-name' style='color:white;'>Reliability (Spin)</div>", unsafe_allow_html=True)
-        st.markdown(metric_gradient_html(p_rel_spin, f"{round(rel_spin,2) if not np.isnan(rel_spin) else '—'} <span class='small'>({'' if np.isnan(p_rel_spin) else f'{round(p_rel_spin,2)}% better'})</span>"), unsafe_allow_html=True)
+        st.markdown(metric_label_html("Reliability (Spin)",
+            "If non striker has a control% of 100, batter has a control % of {val}", 100*rel_spin),
+            unsafe_allow_html=True)
+        st.markdown(metric_gradient_html(p_rel_spin,
+            f"{'—' if np.isnan(rel_spin) else round(rel_spin,2)} "
+            f"<span class='small'>({'' if np.isnan(p_rel_spin) else f'{round(p_rel_spin,2)}% better'})</span>"
+        ), unsafe_allow_html=True)
 
-        st.markdown("<div class='metric-name' style='color:white;'>Int-Rel (Spin)</div>", unsafe_allow_html=True)
-        st.markdown(metric_gradient_html(p_intrel_spin, f"{round(intrel_spin,2) if not np.isnan(intrel_spin) else '—'} <span class='small'>({'' if np.isnan(p_intrel_spin) else f'{round(p_intrel_spin,2)}% better'})</span>"), unsafe_allow_html=True)
+        st.markdown(metric_label_html("Int-Rel (Spin)",
+            "A combined score (Intent*Reliability), indicating controlled striking ability. Value={val}", intrel_spin),
+            unsafe_allow_html=True)
+        st.markdown(metric_gradient_html(p_intrel_spin,
+            f"{'—' if np.isnan(intrel_spin) else round(intrel_spin,2)} "
+            f"<span class='small'>({'' if np.isnan(p_intrel_spin) else f'{round(p_intrel_spin,2)}% better'})</span>"
+        ), unsafe_allow_html=True)
 
     with col3:
-        st.markdown("<div class='metric-name' style='color:white;'>Intent (Overall)</div>", unsafe_allow_html=True)
-        st.markdown(metric_gradient_html(p_intent_overall, f"{round(intent_overall,2) if not np.isnan(intent_overall) else '—'} <span class='small'>({'' if np.isnan(p_intent_overall) else f'{round(p_intent_overall,2)}% better'})</span>"), unsafe_allow_html=True)
+        st.markdown(metric_label_html("Intent (Overall)",
+            "If non striker plays with a SR of 100, batter plays with a SR of {val}", 100*intent_overall),
+            unsafe_allow_html=True)
+        st.markdown(metric_gradient_html(p_intent_overall,
+            f"{'—' if np.isnan(intent_overall) else round(intent_overall,2)} "
+            f"<span class='small'>({'' if np.isnan(p_intent_overall) else f'{round(p_intent_overall,2)}% better'})</span>"
+        ), unsafe_allow_html=True)
 
-        st.markdown("<div class='metric-name' style='color:white;'>Reliability (Overall)</div>", unsafe_allow_html=True)
-        st.markdown(metric_gradient_html(p_rel_overall, f"{round(rel_overall,2) if not np.isnan(rel_overall) else '—'} <span class='small'>({'' if np.isnan(p_rel_overall) else f'{round(p_rel_overall,2)}% better'})</span>"), unsafe_allow_html=True)
+        st.markdown(metric_label_html("Reliability (Overall)",
+            "If non striker has a control% of 100, batter has a control % of {val}", 100*rel_overall),
+            unsafe_allow_html=True)
+        st.markdown(metric_gradient_html(p_rel_overall,
+            f"{'—' if np.isnan(rel_overall) else round(rel_overall,2)} "
+            f"<span class='small'>({'' if np.isnan(p_rel_overall) else f'{round(p_rel_overall,2)}% better'})</span>"
+        ), unsafe_allow_html=True)
 
-        st.markdown("<div class='metric-name' style='color:white;'>Int-Rel (Overall)</div>", unsafe_allow_html=True)
-        st.markdown(metric_gradient_html(p_intrel_overall, f"{round(intrel_overall,2) if not np.isnan(intrel_overall) else '—'} <span class='small'>({'' if np.isnan(p_intrel_overall) else f'{round(p_intrel_overall,2)}% better'})</span>"), unsafe_allow_html=True)
+        st.markdown(metric_label_html("Int-Rel (Overall)",
+            "A combined score (Intent*Reliability), indicating controlled striking ability. Value={val}", intrel_overall),
+            unsafe_allow_html=True)
+        st.markdown(metric_gradient_html(p_intrel_overall,
+            f"{'—' if np.isnan(intrel_overall) else round(intrel_overall,2)} "
+            f"<span class='small'>({'' if np.isnan(p_intrel_overall) else f'{round(p_intrel_overall,2)}% better'})</span>"
+        ), unsafe_allow_html=True)
+
 
 # ─── TAB 2 ────────────────────────────────────────────────────────────
 with tab2:
@@ -391,17 +454,41 @@ with tab2:
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        st.markdown("<div class='metric-name' style='color:white;'>Negative Duration</div>", unsafe_allow_html=True)
-        st.markdown(metric_gradient_html(p_neg_dur, f"{round(neg_dur_v,2) if not np.isnan(neg_dur_v) else '—'} <span class='small'>({'' if np.isnan(p_neg_dur) else f'{round(p_neg_dur,2)}% better'})</span>"), unsafe_allow_html=True)
+        st.markdown(metric_label_html("Negative Duration",
+            "Batter takes {val} balls to convert his knock into a positive impact innings", neg_dur_v),
+            unsafe_allow_html=True)
+        st.markdown(metric_gradient_html(p_neg_dur,
+            f"{'—' if np.isnan(neg_dur_v) else round(neg_dur_v,2)} "
+            f"<span class='small'>({'' if np.isnan(p_neg_dur) else f'{round(p_neg_dur,2)}% better'})</span>"
+        ), unsafe_allow_html=True)
+
     with c2:
-        st.markdown("<div class='metric-name' style='color:white;'>Per Ball Impact</div>", unsafe_allow_html=True)
-        st.markdown(metric_gradient_html(p_per_ball, f"{round(per_ball_v,2) if not np.isnan(per_ball_v) else '—'} <span class='small'>({'' if np.isnan(p_per_ball) else f'{round(p_per_ball,2)}% better'})</span>"), unsafe_allow_html=True)
+        st.markdown(metric_label_html("Per Ball Impact",
+            "Batter adds {val} extra runs per ball", per_ball_v),
+            unsafe_allow_html=True)
+        st.markdown(metric_gradient_html(p_per_ball,
+            f"{'—' if np.isnan(per_ball_v) else round(per_ball_v,2)} "
+            f"<span class='small'>({'' if np.isnan(p_per_ball) else f'{round(p_per_ball,2)}% better'})</span>"
+        ), unsafe_allow_html=True)
+
     with c3:
-        st.markdown("<div class='metric-name' style='color:white;'>Per Innings Impact</div>", unsafe_allow_html=True)
-        st.markdown(metric_gradient_html(p_per_inn, f"{round(per_inn_v,2) if not np.isnan(per_inn_v) else '—'} <span class='small'>({'' if np.isnan(p_per_inn) else f'{round(p_per_inn,2)}% better'})</span>"), unsafe_allow_html=True)
+        st.markdown(metric_label_html("Per Inning Impact",
+            "Batter adds {val} extra runs per innings", per_inn_v),
+            unsafe_allow_html=True)
+        st.markdown(metric_gradient_html(p_per_inn,
+            f"{'—' if np.isnan(per_inn_v) else round(per_inn_v,2)} "
+            f"<span class='small'>({'' if np.isnan(p_per_inn) else f'{round(p_per_inn,2)}% better'})</span>"
+        ), unsafe_allow_html=True)
+
     with c4:
-        st.markdown("<div class='metric-name' style='color:white;'>Impact Improvement</div>", unsafe_allow_html=True)
-        st.markdown(metric_gradient_html(p_imp_improv, f"{round(imp_improv_v,2) if not np.isnan(imp_improv_v) else '—'} <span class='small'>({'' if np.isnan(p_imp_improv) else f'{round(p_imp_improv,2)}% better'})</span>"), unsafe_allow_html=True)
+        st.markdown(metric_label_html("Impact Improvement",
+            "Batter improves runs added per ball by {val} in the later stages (last 25%) of his innings.", imp_improv_v),
+            unsafe_allow_html=True)
+        st.markdown(metric_gradient_html(p_imp_improv,
+            f"{'—' if np.isnan(imp_improv_v) else round(imp_improv_v,2)} "
+            f"<span class='small'>({'' if np.isnan(p_imp_improv) else f'{round(p_imp_improv,2)}% better'})</span>"
+        ), unsafe_allow_html=True)
+
 
 with tab3:
     st.markdown("<div class='section-title' style='color:white;'>Overall 360 Play Profile</div>", unsafe_allow_html=True)
@@ -410,21 +497,26 @@ with tab3:
 
     c1, c2 = st.columns(2)
     with c1:
-        st.markdown("<div class='metric-name' style='color:white;'>Avg Shot Difficulty</div>", unsafe_allow_html=True)
+        st.markdown(metric_label_html("Avg Shot Difficulty",
+            "Probability of an average batter playing similar shots as batter is 1/{val}", audacity_v),
+            unsafe_allow_html=True)
         st.markdown(metric_gradient_html(p_audacity,
-            f"{round(audacity_v,2) if not np.isnan(audacity_v) else '—'} "
+            f"{'—' if np.isnan(audacity_v) else round(audacity_v,2)} "
             f"<span class='small'>({'' if np.isnan(p_audacity) else f'{round(p_audacity,2)}% better'})</span>"
         ), unsafe_allow_html=True)
 
     with c2:
-        st.markdown("<div class='metric-name' style='color:white;'>360 Score</div>", unsafe_allow_html=True)
+        st.markdown(metric_label_html("360 Score",
+            "An overall wagon wheel spread score indicating equalness in different regions. Score={val}", score360_v),
+            unsafe_allow_html=True)
         st.markdown(metric_gradient_html(p_score360,
-            f"{round(score360_v,2) if not np.isnan(score360_v) else '—'} "
+            f"{'—' if np.isnan(score360_v) else round(score360_v,2)} "
             f"<span class='small'>({'' if np.isnan(p_score360) else f'{round(p_score360,2)}% better'})</span>"
         ), unsafe_allow_html=True)
 
+
     st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
-    st.markdown("<div class='section-title' style='color:white;'>Intelligent Wagon Wheel</div>", unsafe_allow_html=True)
+    st.markdown("<div class='section-title' style='color:white;'>Intelligent Wagon Wheel (Takes into account shot difficulty along with the runs scored)</div>", unsafe_allow_html=True)
 
     # checkbox for boundaries only
     
@@ -527,6 +619,96 @@ with tab3:
         f"<div class='responsive-img'><img src='data:image/png;base64,{base64.b64encode(img_bytes).decode()}' style='width:100%;height:100%;'></div>",
         unsafe_allow_html=True
     )
+# with tab4:
+#     st.markdown(
+#         "<div class='section-title' style='color:white;'>Rankings</div>",
+#         unsafe_allow_html=True
+#     )
+
+#     # --- compute ranking metrics for all batters in rlist ---
+#     r_batters = [b for b in rlist if b in batter_list]  # restrict to batters we have data for
+
+#     # Precompute their profile percentiles
+#     rank_data = []
+#     for b in r_batters:
+#         # IntRel
+#         ip = safe_val(intents[b], "pace")
+#         is_ = safe_val(intents[b], "spin")
+#         io = np.nanmean([x for x in (ip, is_) if not np.isnan(x)]) if not (np.isnan(ip) and np.isnan(is_)) else np.nan
+
+#         fs_p = safe_val(fshots[b], "pace")
+#         fs_s = safe_val(fshots[b], "spin")
+#         rp = np.nan if fs_p == 0 or np.isnan(fs_p) else 1.0 / fs_p
+#         rs = np.nan if fs_s == 0 or np.isnan(fs_s) else 1.0 / fs_s
+#         ro = np.nanmean([x for x in (rp, rs) if not np.isnan(x)]) if not (np.isnan(rp) and np.isnan(rs)) else np.nan
+
+#         intrel_o = io * ro if not (np.isnan(io) or np.isnan(ro)) else np.nan
+
+#         p_io = percentile_better(io, ma["intent_overall"], higher_is_better=True)
+#         p_ro = percentile_better(ro, ma["rel_overall"], higher_is_better=True)
+#         p_intrel = percentile_better(intrel_o, ma["intent_overall"] * ma["rel_overall"], higher_is_better=True)
+
+#         avg_intrel_pct_b = float(np.nanmean([p for p in [p_io, p_ro, p_intrel] if not np.isnan(p)]))
+
+#         # Impact
+#         nd = float(negative_dur.get(b, np.nan))
+#         impb = impact_stats.get(b, {})
+#         pb = safe_val(impb, "per_ball_impact")
+#         pi = safe_val(impb, "per_inn_impact")
+#         iim = safe_val(impb, "impact_improvement")
+
+#         p_nd = percentile_better(nd, ma["neg_dur"], higher_is_better=False)
+#         p_pb = percentile_better(pb, ma["per_ball"], higher_is_better=True)
+#         p_pi = percentile_better(pi, ma["per_inn"], higher_is_better=True)
+#         p_iim = percentile_better(iim, ma["imp_improv"], higher_is_better=True)
+
+#         avg_impact_pct_b = float(np.nanmean([p for p in [p_nd, p_pb, p_pi, p_iim] if not np.isnan(p)]))
+
+#         # 360
+#         s360 = stats_360.get(b, {})
+#         aud = safe_val(s360, "audacity")
+#         sc360 = safe_val(s360, "score360")
+#         p_aud = percentile_better(aud, ma["audacity"], higher_is_better=True)
+#         p_sc360 = percentile_better(sc360, ma["score_360"], higher_is_better=True)
+#         avg_360_pct_b = float(np.nanmean([p for p in [p_aud, p_sc360] if not np.isnan(p)]))
+
+#         # T20 Batting Index
+#         t20_index = float(np.nanmean([avg_intrel_pct_b, avg_impact_pct_b, avg_360_pct_b]))
+
+#         rank_data.append({
+#             "batter": b,
+#             "Int-Rel Profile": avg_intrel_pct_b,
+#             "Impact Profile": avg_impact_pct_b,
+#             "360 Profile": avg_360_pct_b,
+#             "T20 Batting Index": t20_index
+#         })
+
+#     import pandas as pd
+#     df_rank = pd.DataFrame(rank_data)
+
+#     # User selection
+#     ranking_type = st.selectbox(
+#         "Select ranking basis:",
+#         options=["Int-Rel Profile", "Impact Profile", "360 Profile", "T20 Batting Index"]
+#     )
+
+#     # Sort by selected metric
+#     df_rank = df_rank.sort_values(by=ranking_type, ascending=False).reset_index(drop=True)
+#     df_rank["Rank"] = df_rank.index + 1
+
+#     # Search player
+#     search_player = st.text_input("Search player:")
+#     if search_player:
+#         df_show = df_rank[df_rank["batter"].str.contains(search_player, case=False, na=False)]
+#     else:
+#         df_show = df_rank
+
+#     # Display
+#     st.dataframe(
+#         df_show[["Rank", "batter", ranking_type]].style.format({ranking_type: "{:.2f}"}),
+#         use_container_width=True
+#     )
+
 
 with tab4:
     st.markdown(
@@ -556,7 +738,9 @@ with tab4:
     )    
 
 st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+st.caption("Hover over text to see what each metric means")
 st.caption("Percentiles shown are 'percentage of batters this player is better than'.")
+st.caption("Profile score is mean of all metric percentiles")
    
 
 
