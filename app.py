@@ -514,7 +514,7 @@ with tab2:
 
     with c4:
         st.markdown(metric_label_html("Impact Improvement",
-            "Batter improves runs added per ball by {val} in the later stages (last 25%) of his innings.", imp_improv_v),
+            "Batter improves runs added per ball by {val} in the later stages (last 25%) of his innings (Compared to first 25%)", imp_improv_v),
             unsafe_allow_html=True)
         st.markdown(metric_gradient_html(p_imp_improv,
             f"{'—' if np.isnan(imp_improv_v) else round(imp_improv_v,2)} "
@@ -770,7 +770,7 @@ with tab4:
     )    
 
 st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
-st.caption("Hover over text to see what each metric means")
+st.caption("Click ℹ️ to see what each metric means")
 st.caption("Percentiles shown are 'percentage of batters this player is better than'.")
 st.caption("Profile score is mean of all metric percentiles")
    
