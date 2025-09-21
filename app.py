@@ -253,7 +253,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown('<div class="big-title">T20 Batting Analytics Dashboard</div>', unsafe_allow_html=True)
-st.markdown('<div class="subtitle">Intent / Reliability, Impact and 360 play metrics — search and compare players</div>', unsafe_allow_html=True)
+st.markdown('<div class="subtitle">Intent / Reliability, Impact and 360 play metrics — search and compare players (2015-2025, 50% weight to latest 2 years performance)</div>', unsafe_allow_html=True)
 
 # ---- Search + suggestion-like behavior ----
 # single selectbox with built-in filtering
