@@ -273,9 +273,9 @@ rel_pace = np.nan if fs_p == 0 or np.isnan(fs_p) else 1.0 / fs_p
 rel_spin = np.nan if fs_s == 0 or np.isnan(fs_s) else 1.0 / fs_s
 rel_overall = np.nanmean([x for x in (rel_pace, rel_spin) if not np.isnan(x)]) if not (np.isnan(rel_pace) and np.isnan(rel_spin)) else np.nan
 
-intrel_pace = intent_pace * rel_pace if not (np.isnan(intent_pace) or np.isnan(rel_pace)) else np.nan
-intrel_spin = intent_spin * rel_spin if not (np.isnan(intent_spin) or np.isnan(rel_spin)) else np.nan
-intrel_overall = intent_overall * rel_overall if not (np.isnan(intent_overall) or np.isnan(rel_overall)) else np.nan
+intrel_pace = intent_pace * np.power(rel_pace,0.5) if not (np.isnan(intent_pace) or np.isnan(rel_pace)) else np.nan
+intrel_spin = intent_spin * np.power(rel_spin,0.5) if not (np.isnan(intent_spin) or np.isnan(rel_spin)) else np.nan
+intrel_overall = intent_overall * np.power(rel_overall,0.5) if not (np.isnan(intent_overall) or np.isnan(rel_overall)) else np.nan
 
 # impact metrics
 neg_dur_v = float(negative_dur.get(batter, np.nan)) if batter in negative_dur else np.nan
@@ -420,7 +420,7 @@ with tab1:
         ), unsafe_allow_html=True)
 
         st.markdown(metric_label_html("Int-Rel (Pace)",
-            "A combined score (Intent*Reliability), indicating controlled striking ability. Value={val}", intrel_pace),
+            "Product of Intent and Reliability with weights 1 and 0.5 respectively, indicating controlled striking ability. Value={val}", intrel_pace),
             unsafe_allow_html=True)
         st.markdown(metric_gradient_html(p_intrel_pace,
             f"{'—' if np.isnan(intrel_pace) else round(intrel_pace,2)} "
@@ -445,7 +445,7 @@ with tab1:
         ), unsafe_allow_html=True)
 
         st.markdown(metric_label_html("Int-Rel (Spin)",
-            "A combined score (Intent*Reliability), indicating controlled striking ability. Value={val}", intrel_spin),
+            "Product of Intent and Reliability with weights 1 and 0.5 respectively, indicating controlled striking ability. Value={val}", intrel_spin),
             unsafe_allow_html=True)
         st.markdown(metric_gradient_html(p_intrel_spin,
             f"{'—' if np.isnan(intrel_spin) else round(intrel_spin,2)} "
@@ -470,7 +470,7 @@ with tab1:
         ), unsafe_allow_html=True)
 
         st.markdown(metric_label_html("Int-Rel (Overall)",
-            "A combined score (Intent*Reliability), indicating controlled striking ability. Value={val}", intrel_overall),
+            "Product of Intent and Reliability with weights 1 and 0.5 respectively, indicating controlled striking ability. Value={val}", intrel_overall),
             unsafe_allow_html=True)
         st.markdown(metric_gradient_html(p_intrel_overall,
             f"{'—' if np.isnan(intrel_overall) else round(intrel_overall,2)} "
